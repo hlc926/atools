@@ -1,0 +1,82 @@
+#!/bin/perl
+#
+# https://github.com/hlc926/atools
+# BSD 3-Clause "New" or "Revised" License
+
+
+if (@ARGV < 1) {
+	print "Usage: $0 <filein> [fileout]\n";
+	exit;
+}
+
+$filein = shift;
+$fileout = shift;
+
+open(HI, $filein) or die "open $filein err $!";
+$strin = do { local $/ = undef; <HI>; };	# 分隔符 $/ 默认是回车
+close(HI);
+
+$strout = jsonstr_format($strin);
+if (defined($fileout)) {
+	open(HO, ">$fileout") or die "open $fileout err $!";
+	print HO $strout;
+	close(HO);
+} else {
+	print $strout;
+}
+
+##############################
+# json
+sub jsonstr_format {
+	my $strin = shift;
+	my $strout = "";
+	my $len = 0;
+	my $dep = 0;
+	my $pos = 0;
+	my $prepos = 0;
+
+	$strin =~ s/\s*\r\n\s*//g;
+	$strin =~ s/\s*\n\s*//g;
+
+	$len = length($strin);
+
+	for($pos = 0; $pos < $len; $pos++) {
+		my $cur = substr($strin, $pos, 1);
+		my $nex = substr($strin, $pos + 1, 1);
+		if ($cur eq "{" || $cur eq "[") {
+			$strout .= $cur;
+			$strout .= "\n";
+			$dep++;
+			$strout .= fill_blank($dep);
+		} elsif ($cur eq "}" || $cur eq "]") {
+			$strout .= "\n";
+
+			$dep--;
+			$strout .= fill_blank($dep);
+			$strout .= $cur;
+			if ($nex ne "," && $nex ne "}" && $nex ne "]") {
+				$strout .= "\n";
+			}
+	
+		} elsif ($cur eq ",") {
+			$strout .= $cur;
+			$strout .= "\n";
+			$strout .= fill_blank($dep);
+		} else {
+			$strout .= $cur;
+		}
+	}
+
+	return $strout;
+}
+
+sub fill_blank {
+	my $dep = shift;
+	my $strout = "";
+
+	for(my $i = 0; $i < $dep; $i++) {
+		$strout .= "\t";
+	}
+
+	return $strout;
+}

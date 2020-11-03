@@ -1,0 +1,191 @@
+#!/bin/perl
+#
+# https://github.com/hlc926/atools
+# BSD 3-Clause "New" or "Revised" License
+
+
+%hkw = (
+    'drop' => 0,
+    'insert' => 0,
+    'create' => 0,
+    'select' => 0,
+    'from' => 0,
+    'where' => 0,
+    'group' => 0,
+    'order' => 0,
+    'having' => 0,
+
+	'join' => 1,
+	'left' => 1,
+	'right' => 1,
+	'full' => 1,
+	'cross' => 1,
+
+);
+
+if (@ARGV < 1) {
+    print "Usage: $0 <filein> [fileout]\n";
+    exit;
+}
+
+$filein = shift;
+$fileout = shift;
+
+open(HI, $filein) or die "open $filein err $!";
+$strin = do { local $/ = undef; <HI>; };  # 分隔符 $/ 默认是回车
+close(HI);
+
+$strout = sql_format($strin);
+if (defined($fileout)) {
+	open(HO, ">$fileout") or die "open $fileout err $!";
+	print HO $strout;
+	close(HO);
+} else {
+	print $strout;
+}
+
+##################\
+# sql
+
+sub sql_format {
+	my $strin = shift;
+	my $strout = "";
+	my $dep = 0;
+
+	sql_parse($strin);	# 得到 vecwork veccnt
+
+	my $prekeylevel = 0;
+	my $preiskey = 0;
+	for(my $iw = 0; $iw < $veccnt; $iw++) {
+		my $curwork = $vecwork[$iw];
+		my $lccurwork = lc($curwork);
+		my $prelcwork = lc($vecwork[$iw - 1]);
+
+		my $curiskey = 0;
+		$curiskey = 1 if (defined($hkw{$lccurwork}));
+
+
+		my $curisnew = 0;
+		my $strlen = length($strout);
+		my $islkh = 0;
+		if ($strlen == 0) {
+			$curisnew = 1;
+		} elsif (substr($strout, $strlen - 1, 1) eq "\n") {
+			$islkh = 1 if (substr($strout, $strlen - 2, 1) eq "(");
+			$curisnew = 1;
+		} elsif ($curiskey == 1) {
+			$islkh = 1 if (substr($strout, $strlen - 1, 1) eq "(");
+			if ($lccurwork eq "join" 
+				&& ($prelcwork eq "left" || $prelcwork eq "right"
+					|| $prelcwork eq "full" || $prelcwork eq "cross"
+					|| $prelcwork eq "outer")) {
+				$curisnew = 0;
+			} else {
+				$strout .= "\n";
+				$curisnew = 1;
+			}
+		} elsif ($curwork eq ")") {
+			my $khcnt = 1;
+			my $i =  $iw - 1;
+			for (; $i >= 0; $i--) {
+				$khcnt++ if ($vecwork[$i] eq ")");
+				$khcnt-- if ($vecwork[$i] eq "(");
+				last if ($khcnt == 0);
+			}
+			if ($khcnt == 0 && defined($hkw{$vecwork[$i + 1]})) {
+				$strout .= "\n";
+				$curisnew = 1;
+			}
+		}
+
+		#	print "[$iw] a[$curwork][$lccurwork] new[$curisnew]cur[$curiskey]pre[$preiskey] dep[$dep]lkh[$islkh]\n";
+		if ($curisnew == 1) {	# 第一个词
+			if (substr($curwork, 0, 1) eq ";") {
+				$dep = 0;
+			} elsif (substr($curwork, 0, 1) eq ")") {
+				$dep = pop(@vdepkh);
+				$curiskey = 1;
+			} elsif ($islkh == 1) {
+				push(@vdepkh, $dep);
+				$dep++;
+			} elsif ($preiskey == 1 && $curiskey == 0) {
+				$dep++;
+			} elsif ($preiskey == 0 && $curiskey == 1) {
+				$dep--;
+			} 
+			$dep = 0 if ($dep < 0);
+			$strout .= fill_blank($dep);
+
+			$preiskey = $curiskey;	# 上一行第一个词
+		} elsif (length($strout) > 0 && $curwork ne "\n"){
+			$strout .= " ";
+		}
+		# print "[$iw] b[$curwork][$lccurwork] new[$curisnew]cur[$curiskey]pre[$preiskey] dep[$dep]lkh[$islkh]\n";
+
+		$strout .= $curwork;
+	}
+
+	return $strout;
+}
+
+sub fill_blank {
+	my $dep = shift;
+	my $strout = "";
+
+	for(my $i = 0; $i < $dep; $i++) {
+		$strout .= "\t";
+	}
+
+	return $strout;
+}
+
+sub sql_parse {
+	my $strin = shift;
+    my $lenin = 0;
+    my $bpos = 0;
+    my $epos = 0;
+
+	$strin =~ s/ *, */, /g;
+	$strin =~ s/\t*,\t*/, /g;
+	$strin =~ s/\s*\(\s*/ \( /g;
+	$strin =~ s/\s*\)\s*/ \) /g;
+	$strin =~ s/\s+(on)\s+/ $1 /ig;
+
+    $lenin = length($strin);
+
+	for($bpos = 0; $bpos < $lenin; $bpos++) {
+		my $c1 = substr($strin, $bpos, 1);
+		next if ($c1 eq " " || $c1 eq "\t");
+
+		my $isstr = 0;
+		if ($c1 eq "'" || $c1 eq "\"") {
+			$isstr = 1;
+			$epos = $bpos + 1;
+		} else {
+			$epos = $bpos;
+		}
+
+		my $c2 = "";
+		for (; $epos < $lenin; $epos++) {
+			$c2 = substr($strin, $epos, 1);
+			# print "[$bpos][$epos][$c1][$isstr][$c2]\n";
+			if ($isstr == 1) {
+				next if ($c2 ne "'" && $c2 ne "\"");
+			} elsif ($c2 ne " " && $c2 ne "\t" && $c2 ne "\n"
+				&&  $c2 ne "'" &&  $c2 ne "\"") {
+				next;
+			}
+
+			last;
+		}
+
+		$epos++ if ($isstr == 1 || $c2 eq "\n");
+		my $word = substr($strin, $bpos, $epos - $bpos);
+		# print "[$word]\n";
+		if ($word ne "") {
+			$vecwork[$veccnt++] = $word;
+		}
+
+		$bpos = $epos - 1;	# for 统一 ++ 了
+	}
+}
